@@ -2,9 +2,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
+import { downloadCsv } from '../../lib/download-csv';
+import AdminHeader from '../admin-header';
 
 type Order = {
   id: string;
@@ -60,6 +61,18 @@ const money = (value: number | string | null | undefined) =>
 
 const readable = (value: string | null | undefined) =>
   (value || 'unknown').replace(/_/g, ' ');
+
+const orderDate = (timestamp: string) =>
+  new Date(timestamp).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+const orderTime = (timestamp: string) =>
+  new Date(timestamp).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+
+const orderDueDate = (timestamp: string) =>
+  new Date(new Date(timestamp).getTime() + 24 * 60 * 60 * 1000)
+    .toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -243,6 +256,40 @@ export default function OrdersPage() {
           (order) => order.order_status.toLowerCase() === filter
         );
 
+  function downloadOrders() {
+    const rows = filteredOrders.map((order) => [
+      order.order_number ?? '',
+      order.id,
+      order.user_id,
+      order.address_id,
+      orderDate(order.created_at),
+      orderTime(order.created_at),
+      orderDueDate(order.created_at),
+      order.subtotal,
+      order.discount,
+      order.delivery_fee,
+      order.total,
+      order.payment_status,
+      readable(order.order_status),
+    ]);
+
+    downloadCsv(`fresh-basket-orders-${new Date().toISOString().slice(0, 10)}.csv`, [
+      'Order number',
+      'Order ID',
+      'Customer ID',
+      'Address ID',
+      'Order date',
+      'Order time (IST)',
+      'Due date (order date + 1 day)',
+      'Subtotal (INR)',
+      'Discount (INR)',
+      'Delivery fee (INR)',
+      'Total (INR)',
+      'Payment status',
+      'Order status',
+    ], rows);
+  }
+
   if (authChecking) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-100">
@@ -263,26 +310,10 @@ export default function OrdersPage() {
 
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
-      <header className="bg-green-800 px-6 py-6 text-white shadow">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-sm text-green-100">
-              Grocery Store Management
-            </p>
-            <h1 className="mt-1 text-3xl font-bold">Order Management</h1>
-            <p className="mt-2 text-sm text-green-100">
-              View customer orders and manage delivery status
-            </p>
-          </div>
-
-          <Link
-            href="/"
-            className="rounded-lg bg-white px-4 py-2 font-semibold text-green-800 hover:bg-green-50"
-          >
-            Back to Dashboard
-          </Link>
-        </div>
-      </header>
+      <AdminHeader
+        title="Order Management"
+        description="View customer orders and manage delivery status"
+      />
 
       <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
         {error && (
@@ -328,6 +359,15 @@ export default function OrdersPage() {
               </select>
 
               <button
+                onClick={downloadOrders}
+                disabled={loading || filteredOrders.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border border-green-800 bg-white px-4 py-2 font-semibold text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Download CSV
+              </button>
+
+              <button
                 onClick={() => void loadOrders()}
                 disabled={loading}
                 className="rounded-lg bg-green-800 px-4 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-60"
@@ -348,6 +388,8 @@ export default function OrdersPage() {
                   <tr>
                     <th className="px-4 py-3">Order</th>
                     <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Time</th>
+                    <th className="px-4 py-3">Due date</th>
                     <th className="px-4 py-3">Total</th>
                     <th className="px-4 py-3">Payment</th>
                     <th className="px-4 py-3">Order status</th>
@@ -362,7 +404,13 @@ export default function OrdersPage() {
                         {order.order_number ?? order.id.slice(0, 8)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-4 text-gray-600">
-                        {new Date(order.created_at).toLocaleDateString('en-IN')}
+                        {orderDate(order.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-gray-600">
+                        {orderTime(order.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-4 text-gray-600">
+                        {orderDueDate(order.created_at)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-4">
                         {money(order.total)}
@@ -426,6 +474,20 @@ export default function OrdersPage() {
                     {selectedAddress.landmark && (
                       <p>Landmark: {selectedAddress.landmark}</p>
                     )}
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([
+                        selectedAddress.address_line1,
+                        selectedAddress.address_line2,
+                        selectedAddress.city,
+                        selectedAddress.state,
+                        selectedAddress.pincode,
+                      ].filter(Boolean).join(', '))}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex rounded-lg border border-green-800 px-3 py-2 font-semibold text-green-800 hover:bg-green-50"
+                    >
+                      📍 Open delivery address in Google Maps
+                    </a>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-gray-500">

@@ -784,6 +784,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabase';
+import { downloadCsv } from '../lib/download-csv';
+import AdminHeader from './admin-header';
 
 type Order = {
   id: string;
@@ -801,6 +803,18 @@ type DashboardStats = {
   totalProducts: number;
 };
 
+const orderDate = (timestamp: string) =>
+  new Date(timestamp).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+const orderTime = (timestamp: string) =>
+  new Date(timestamp).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+
+const orderDueDate = (timestamp: string) =>
+  new Date(new Date(timestamp).getTime() + 24 * 60 * 60 * 1000)
+    .toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+
 export default function AdminDashboard() {
   const router = useRouter();
 
@@ -817,7 +831,6 @@ export default function AdminDashboard() {
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [signingOut, setSigningOut] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -956,21 +969,6 @@ export default function AdminDashboard() {
     };
   }, [router, loadDashboard]);
 
-  async function handleLogout() {
-    setSigningOut(true);
-
-    const { error: logoutError } = await supabase.auth.signOut();
-
-    if (logoutError) {
-      setError(logoutError.message);
-      setSigningOut(false);
-      return;
-    }
-
-    router.replace('/login');
-    router.refresh();
-  }
-
   // Avoid showing dashboard content while authentication is checked.
   if (authChecking) {
     return (
@@ -1013,39 +1011,36 @@ export default function AdminDashboard() {
     },
   ];
 
+  function downloadRecentOrders() {
+    const rows = recentOrders.map((order) => [
+      order.order_number ?? '',
+      order.id,
+      orderDate(order.created_at),
+      orderTime(order.created_at),
+      orderDueDate(order.created_at),
+      order.total,
+      order.payment_status,
+      order.order_status.replace(/_/g, ' '),
+    ]);
+
+    downloadCsv(`fresh-basket-recent-orders-${new Date().toISOString().slice(0, 10)}.csv`, [
+      'Order number',
+      'Order ID',
+      'Order date',
+      'Order time (IST)',
+      'Due date (order date + 1 day)',
+      'Total (INR)',
+      'Payment status',
+      'Order status',
+    ], rows);
+  }
+
   return (
     <main className="min-h-screen bg-gray-100 text-gray-900">
-      <header className="bg-green-800 px-6 py-6 text-white shadow">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <div>
-            <p className="text-sm text-green-100">
-              Grocery Store Management
-            </p>
-            <h1 className="mt-1 text-3xl font-bold">
-              Admin Dashboard
-            </h1>
-            <p className="mt-2 text-sm text-green-100">
-              Overview of your grocery business
-            </p>
-          </div>
-          <a
-          href="/orders"
-          className="rounded-lg bg-white px-4 py-2 font-semibold text-green-800 hover:bg-green-50"
-        >
-          Manage Orders
-        </a>
-          <button
-            onClick={handleLogout}
-            disabled={signingOut}
-            className="rounded-lg bg-white px-4 py-2 font-semibold text-green-800 hover:bg-green-50 disabled:opacity-60"
-          >
-            {signingOut ? 'Signing out...' : 'Logout'}
-          </button>
-        </div>
-                
-
-
-      </header>
+      <AdminHeader
+        title="Admin Dashboard"
+        description="Overview of your grocery business"
+      />
 
       <div className="mx-auto max-w-7xl space-y-8 px-6 py-8">
         {error && (
@@ -1099,13 +1094,23 @@ export default function AdminDashboard() {
               </p>
             </div>
 
-            <button
-              onClick={() => void loadDashboard()}
-              disabled={loading}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
-            >
-              {loading ? 'Refreshing...' : 'Refresh'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={downloadRecentOrders}
+                disabled={loading || recentOrders.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border border-green-800 bg-white px-4 py-2 text-sm font-semibold text-green-800 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Download CSV
+              </button>
+              <button
+                onClick={() => void loadDashboard()}
+                disabled={loading}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+              >
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -1124,6 +1129,8 @@ export default function AdminDashboard() {
                       Order Number
                     </th>
                     <th className="px-6 py-4 font-semibold">Date</th>
+                    <th className="px-6 py-4 font-semibold">Time</th>
+                    <th className="px-6 py-4 font-semibold">Due date</th>
                     <th className="px-6 py-4 font-semibold">
                       Amount
                     </th>
@@ -1140,9 +1147,13 @@ export default function AdminDashboard() {
                         {order.order_number ?? order.id.slice(0, 8)}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4 text-gray-600">
-                        {new Date(
-                          order.created_at
-                        ).toLocaleDateString('en-IN')}
+                        {orderDate(order.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-6 py-4 text-gray-600">
+                        {orderTime(order.created_at)}
+                      </td>
+                      <td className="whitespace-nowrap px-6 py-4 text-gray-600">
+                        {orderDueDate(order.created_at)}
                       </td>
                       <td className="whitespace-nowrap px-6 py-4">
                         ₹{Number(order.total || 0).toFixed(2)}
